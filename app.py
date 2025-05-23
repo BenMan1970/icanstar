@@ -1,27 +1,32 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import numpy as np # Sera importé selon la version de requirements.txt
 import yfinance as yf
-import pandas_ta as pd_ta
-from datetime import datetime, timedelta # Pour les dates si besoin d'ajustements fins
+import pandas_ta as pd_ta # Sera importé selon la version de requirements.txt
+from datetime import datetime, timedelta 
 
 # --- Section 1: Fonction de Calcul de l'Indicateur Canadian Confluence ---
-# (Votre fonction calculate_canadian_confluence reste la même)
 def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLength, ichimokuLength, len1_smooth_ha, len2_smooth_ha):
     min_rows_needed = max(hmaLength, adxLength, rsiLength, ichimokuLength, 26, 52, len1_smooth_ha, len2_smooth_ha) + 50
     if len(df) < min_rows_needed:
-        return "Erreur", f"Pas assez de données ({len(df)}/{min_rows_needed})", df['Close'].iloc[-1] if not df.empty and 'Close' in df.columns and not df['Close'].empty else 0
+        current_price_fallback = 0
+        if not df.empty and 'Close' in df.columns and not df['Close'].empty:
+            current_price_fallback = df['Close'].iloc[-1]
+        return "Erreur", f"Pas assez de données ({len(df)}/{min_rows_needed})", current_price_fallback
 
     df_calc = df.copy()
     hma_slope_signal, ha_signal, smoothed_ha_signal, rsi_signal, adx_has_momentum_signal, ichimoku_signal = 0,0,0,0,0,0
-    current_price = df_calc['Close'].iloc[-1] if not df_calc.empty and 'Close' in df_calc.columns and not df_calc['Close'].empty else 0
+    current_price = 0 # Default
+    if not df_calc.empty and 'Close' in df_calc.columns and not df_calc['Close'].empty:
+        current_price = df_calc['Close'].iloc[-1]
+
 
     try:
         hma_series = df_calc.ta.hma(length=hmaLength, append=False)
         if hma_series is not None and not hma_series.isna().all() and len(hma_series) >= 2:
             if hma_series.iloc[-1] > hma_series.iloc[-2]: hma_slope_signal = 1
             elif hma_series.iloc[-1] < hma_series.iloc[-2]: hma_slope_signal = -1
-        else: return "Erreur HMA", "Calcul impossible (série vide ou <2 valeurs)", current_price
+        else: return "Erreur HMA", "Calcul HMA impossible (série vide ou <2 valeurs)", current_price
     except Exception as e: return "Erreur HMA", str(e), current_price
 
     try:
@@ -29,7 +34,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         if ha_df is not None and 'HA_close' in ha_df.columns and 'HA_open' in ha_df.columns and not ha_df['HA_close'].isna().all() and len(ha_df) > 0:
             if ha_df['HA_close'].iloc[-1] > ha_df['HA_open'].iloc[-1]: ha_signal = 1
             elif ha_df['HA_close'].iloc[-1] < ha_df['HA_open'].iloc[-1]: ha_signal = -1
-        else: return "Erreur HA", "Calcul impossible (série vide ou colonnes manquantes)", current_price
+        else: return "Erreur HA", "Calcul HA impossible (série vide ou colonnes manquantes)", current_price
     except Exception as e: return "Erreur HA", str(e), current_price
 
     try:
@@ -41,7 +46,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
 
         ha_on_ema = pd.DataFrame(index=ohlc_ema.index)
         ha_on_ema['haclose_s1'] = (ohlc_ema['Open'] + ohlc_ema['High'] + ohlc_ema['Low'] + ohlc_ema['Close']) / 4
-        ha_on_ema['haopen_s1'] = np.nan
+        ha_on_ema['haopen_s1'] = np.nan # Utilisez np.nan (minuscule) qui vient de la version de numpy installée
         first_valid_idx = ohlc_ema.first_valid_index()
         if first_valid_idx is not None and not ohlc_ema.loc[first_valid_idx, ['Open', 'Close']].isna().any():
             ha_on_ema.loc[first_valid_idx, 'haopen_s1'] = (ohlc_ema.loc[first_valid_idx, 'Open'] + ohlc_ema.loc[first_valid_idx, 'Close']) / 2
@@ -62,7 +67,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         if not smooth_ha_open.empty and not smooth_ha_close.empty and not smooth_ha_open.isna().all() and not smooth_ha_close.isna().all():
             if smooth_ha_close.iloc[-1] > smooth_ha_open.iloc[-1]: smoothed_ha_signal = 1
             elif smooth_ha_close.iloc[-1] < smooth_ha_open.iloc[-1]: smoothed_ha_signal = -1
-        else: return "Erreur HA Lissé", "Calcul EMA impossible (séries vides/NaN)", current_price
+        else: return "Erreur HA Lissé", "Calcul EMA HA Lissé impossible", current_price
     except Exception as e: return "Erreur HA Lissé", str(e), current_price
 
     try:
@@ -71,7 +76,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         if rsi_series is not None and not rsi_series.isna().all() and len(rsi_series) > 0:
             if rsi_series.iloc[-1] > 50: rsi_signal = 1
             elif rsi_series.iloc[-1] < 50: rsi_signal = -1
-        else: return "Erreur RSI", "Calcul impossible (série vide)", current_price
+        else: return "Erreur RSI", "Calcul RSI impossible", current_price
     except Exception as e: return "Erreur RSI", str(e), current_price
 
     try:
@@ -80,7 +85,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         if adx_df is not None and adx_col_name in adx_df.columns and not adx_df[adx_col_name].isna().all() and len(adx_df) > 0:
             adx_val = adx_df[adx_col_name].iloc[-1]
             if adx_val >= adxThreshold: adx_has_momentum_signal = 1
-        else: return "Erreur ADX", f"Calcul impossible (colonne {adx_col_name} manquante ou série vide)", current_price
+        else: return "Erreur ADX", f"Calcul ADX impossible (col {adx_col_name})", current_price
     except Exception as e: return "Erreur ADX", str(e), current_price
 
     try:
@@ -91,16 +96,16 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         senkou_b_current = (df_calc['High'].rolling(window=senkou_b_period).max() + df_calc['Low'].rolling(window=senkou_b_period).min()) / 2
         if tenkan_sen.empty or kijun_sen.empty or senkou_a_current.empty or senkou_b_current.empty or \
            tenkan_sen.isna().all() or kijun_sen.isna().all() or senkou_a_current.isna().all() or senkou_b_current.isna().all():
-             return "Erreur Ichimoku", "Calcul des lignes Ichimoku impossible (données vides ou NaN)", current_price
+             return "Erreur Ichimoku", "Calcul lignes Ichimoku impossible", current_price
         cloud_top_current = pd.concat([senkou_a_current, senkou_b_current], axis=1).max(axis=1)
         cloud_bottom_current = pd.concat([senkou_a_current, senkou_b_current], axis=1).min(axis=1)
         if cloud_top_current.empty or cloud_bottom_current.empty or cloud_top_current.isna().all() or cloud_bottom_current.isna().all():
-            return "Erreur Ichimoku", "Calcul du cloud impossible (données vides ou NaN)", current_price
+            return "Erreur Ichimoku", "Calcul cloud Ichimoku impossible", current_price
         current_close_val = df_calc['Close'].iloc[-1]
         current_cloud_top_val = cloud_top_current.iloc[-1]
         current_cloud_bottom_val = cloud_bottom_current.iloc[-1]
         if pd.isna(current_close_val) or pd.isna(current_cloud_top_val) or pd.isna(current_cloud_bottom_val):
-             return "Erreur Ichimoku", "Données cloud manquantes (NaN à la dernière ligne)", current_price
+             return "Erreur Ichimoku", "Données cloud Ichimoku manquantes (NaN)", current_price
         if current_close_val > current_cloud_top_val: ichimoku_signal = 1
         elif current_close_val < current_cloud_bottom_val: ichimoku_signal = -1
     except Exception as e: return "Erreur Ichimoku", str(e), current_price
@@ -120,7 +125,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
     if rsi_signal == -1: bearConfluences += 1
     if ichimoku_signal == -1: bearConfluences +=1
     if adx_has_momentum_signal == 1 and primary_bear: bearConfluences += 1
-    return bullConfluences, bear_confluences, current_price
+    return bullConfluences, bearConfluences, current_price
 
 # --- Section 2: Configuration de l'Application Streamlit ---
 st.set_page_config(layout="wide")
@@ -129,7 +134,6 @@ st.markdown("Analyse les actifs pour des signaux de 5 ou 6 étoiles basés sur l
 
 st.sidebar.header("⚙️ Paramètres de l'Indicateur")
 hmaLength_input = st.sidebar.number_input("HMA Length (Pine: 20)", min_value=1, value=20, step=1, key="hma_len")
-# ... (autres inputs d'indicateurs) ...
 adxThreshold_input = st.sidebar.number_input("ADX Threshold (Pine: 20)", min_value=1, value=20, step=1, key="adx_thresh")
 rsiLength_input = st.sidebar.number_input("RSI Length (Pine: 10)", min_value=1, value=10, step=1, key="rsi_len")
 adxLength_input = st.sidebar.number_input("ADX Length (Pine: 14)", min_value=1, value=14, step=1, key="adx_len")
@@ -147,7 +151,7 @@ timeframe_display = st.sidebar.selectbox("Unité de Temps", list(timeframe_optio
 timeframe_yf = timeframe_options[timeframe_display]
 
 assets_forex_input_default = "EURUSD=X,GBPUSD=X,USDJPY=X,AUDUSD=X,USDCAD=X,NZDUSD=X,USDCHF=X"
-assets_commodities_input_default = "XAUUSD=X,SI=F,CL=F,NG=F" # XAUUSD=X par défaut
+assets_commodities_input_default = "XAUUSD=X,SI=F,CL=F,NG=F" 
 assets_indices_input_default = "^GSPC,^DJI,^IXIC,^FTSE,^GDAXI,^FCHI,^N225"
 
 assets_forex_input = st.sidebar.text_area("Paires Forex", assets_forex_input_default, key="forex_assets")
@@ -174,7 +178,7 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
         progress_bar = progress_bar_container.progress(0)
         total_assets_count = len(all_assets)
         max_lookback_param = max(hmaLength_input, adxLength_input, rsiLength_input, ichimokuLength_input, 26, 52, len1_input, len2_input)
-        candles_to_fetch = max_lookback_param + 150 # Fetch un peu plus pour être sûr
+        candles_to_fetch = max_lookback_param + 150 
 
         asset_name_display_mapping = {
             "XAUUSD=X": "Or (XAU/USD)", "SI=F": "Argent (Futures)", "CL=F": "Pétrole (WTI Futures)", "NG=F": "Gaz Naturel (Futures)",
@@ -193,21 +197,20 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
             asset_name_display = asset_ticker 
             if asset_ticker in asset_name_display_mapping:
                 asset_name_display = asset_name_display_mapping[asset_ticker]
-            else: # Pour les paires Forex non listées explicitement, ou autres
+            else: 
                 name_temp = asset_ticker.replace("=X", "").replace(".SI", "").replace("=F", "").replace("^", "")
                 asset_name_display = name_temp
             
             try:
-                # Détermination de la période yfinance
-                yf_period_to_use = "2y" # Default
+                yf_period_to_use = "2y" 
                 if timeframe_yf == "1m": yf_period_to_use = "7d"
                 elif timeframe_yf in ["2m", "5m", "15m", "30m", "90m"]: yf_period_to_use = "60d"
                 elif timeframe_yf == "1h":
                     if asset_ticker == "XAUUSD=X":
-                        yf_period_to_use = "1y" # Période plus courte pour XAUUSD=X en 1h
+                        yf_period_to_use = "1y" 
                         print(f"DEBUG: XAUUSD=X 1h, using period: {yf_period_to_use}")
                     else:
-                        yf_period_to_use = "730d" # ~2 ans
+                        yf_period_to_use = "730d" 
                 elif timeframe_yf == "4h": yf_period_to_use = "2y" 
                 elif timeframe_yf == "1d": yf_period_to_use = "5y"
                 elif timeframe_yf == "1wk": yf_period_to_use = "10y"
@@ -271,7 +274,7 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
             results_placeholder.info("Aucun signal 5 étoiles ou plus détecté avec les paramètres actuels.")
         if error_logs:
             error_df = pd.DataFrame(error_logs)
-            error_messages_expander = st.expander("Afficher les erreurs de calcul/API détaillées", expanded=True) # Renommé
+            error_messages_expander = st.expander("Afficher les erreurs de calcul détaillées", expanded=True)
             with error_messages_expander:
                 st.warning("Des erreurs sont survenues pendant le scan :")
                 st.dataframe(error_df, use_container_width=True, hide_index=True)
