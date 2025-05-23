@@ -5,6 +5,7 @@ import yfinance as yf
 import pandas_ta as pd_ta
 
 # --- Section 1: Fonction de Calcul de l'Indicateur Canadian Confluence ---
+# (Votre fonction calculate_canadian_confluence reste la même)
 def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLength, ichimokuLength, len1_smooth_ha, len2_smooth_ha):
     min_rows_needed = max(hmaLength, adxLength, rsiLength, ichimokuLength, 26, 52, len1_smooth_ha, len2_smooth_ha) + 50
     if len(df) < min_rows_needed:
@@ -142,9 +143,12 @@ timeframe_options = {
 timeframe_display = st.sidebar.selectbox("Unité de Temps", list(timeframe_options.keys()), index=4, key="timeframe_select")
 timeframe_yf = timeframe_options[timeframe_display]
 
+# --- MODIFICATION DES ACTIFS PAR DÉFAUT ---
 assets_forex_input_default = "EURUSD=X,GBPUSD=X,USDJPY=X,AUDUSD=X,USDCAD=X,NZDUSD=X,USDCHF=X"
-assets_commodities_input_default = "GC=F,SI=F,CL=F,NG=F"
+assets_commodities_input_default = "XAUUSD=X,SI=F,CL=F,NG=F" # Remplacé GC=F par XAUUSD=X
 assets_indices_input_default = "^GSPC,^DJI,^IXIC,^FTSE,^GDAXI,^FCHI,^N225"
+# --- FIN MODIFICATION ---
+
 assets_forex_input = st.sidebar.text_area("Paires Forex", assets_forex_input_default, key="forex_assets")
 assets_commodities_input = st.sidebar.text_area("Matières Premières", assets_commodities_input_default, key="commodities_assets")
 assets_indices_input = st.sidebar.text_area("Indices", assets_indices_input_default, key="indices_assets")
@@ -178,24 +182,43 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
         elif timeframe_yf == "1wk": yf_period = "10y"
         else: yf_period = "2y"
 
+        # --- MODIFICATION DU MAPPING DES NOMS ---
         asset_name_display_mapping = {
-            "GC=F": "Or", "SI=F": "Argent", "CL=F": "Pétrole (WTI)", "NG=F": "Gaz Naturel",
-            "^GSPC": "S&P 500", "^DJI": "US30 (Dow Jones)", "^IXIC": "NAS100 (Nasdaq)",
-            "^FTSE": "FTSE 100 (UK)", "^GDAXI": "DAX 40 (Allemagne)", "^FCHI": "CAC 40 (France)",
+            "XAUUSD=X": "Or (XAU/USD)", # Nouveau nom pour XAUUSD=X
+            # "GC=F": "Or (Futures Comex)", # Commenté ou supprimé si vous ne l'utilisez plus
+            "SI=F": "Argent", 
+            "CL=F": "Pétrole (WTI)", 
+            "NG=F": "Gaz Naturel",
+            "^GSPC": "S&P 500", 
+            "^DJI": "US30 (Dow Jones)", 
+            "^IXIC": "NAS100 (Nasdaq)",
+            "^FTSE": "FTSE 100 (UK)", 
+            "^GDAXI": "DAX 40 (Allemagne)", 
+            "^FCHI": "CAC 40 (France)",
             "^N225": "Nikkei 225 (Japon)"
+            # Ajoutez d'autres mappings si nécessaire, par exemple pour les paires Forex si vous voulez un formatage spécial
+            # "EURUSD=X": "EUR/USD",
         }
+        # --- FIN MODIFICATION ---
         
         for i, asset_ticker in enumerate(all_assets):
+            # --- AJOUT POUR DÉBOGAGE ---
+            st.sidebar.info(f"Début: {asset_ticker} ({i+1}/{total_assets_count})") 
+            print(f"DEBUG: Début traitement: {asset_ticker} ({i+1}/{total_assets_count})")
+            # --- FIN AJOUT ---
+
             current_asset_status = f"Traitement de {asset_ticker} ({i+1}/{total_assets_count})..."
             status_placeholder.text(current_asset_status)
-            asset_name_display = asset_ticker # Default for error logging if it fails before mapping
+            asset_name_display = asset_ticker 
             try:
                 data = yf.download(asset_ticker, period=yf_period, interval=timeframe_yf, progress=False, auto_adjust=True, timeout=20)
                 if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
+                
                 if data.empty or len(data) < max_lookback_param + 5:
                     msg = f"Pas assez de données pour {asset_ticker} (obtenues: {len(data)}, requis min: {max_lookback_param+5}). Intervalle: {timeframe_yf}, Période: {yf_period}."
                     error_logs.append({"Actif": asset_ticker, "Erreur": msg, "Détail": "Vérifiez la disponibilité des données."})
                     continue
+                
                 data_for_indicator = data.iloc[-candles_to_fetch:]
                 if len(data_for_indicator) < max_lookback_param + 5:
                     msg = f"Données insuffisantes après filtrage pour {asset_ticker} ({len(data_for_indicator)}/{max_lookback_param+5})."
@@ -215,11 +238,13 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
                 if isinstance(bull_rating, str): 
                     error_logs.append({"Actif": asset_name_display, "Erreur Calcul": f"{bull_rating}", "Message": f"{bear_rating}"})
                     continue
+                
                 signal_text, final_rating_display, signal_type = "NEUTRE", 0, "NEUTRE"
                 if bull_rating >= 5 and bull_rating >= bear_rating:
                     stars, signal_text, final_rating_display, signal_type = "⭐" * bull_rating, f"{'⭐' * bull_rating} ACHAT ({bull_rating}c)", bull_rating, "ACHAT"
                 elif bear_rating >= 5:
                     stars, signal_text, final_rating_display, signal_type = "⭐" * bear_rating, f"{'⭐' * bear_rating} VENTE ({bear_rating}c)", bear_rating, "VENTE"
+                
                 if final_rating_display >= 5:
                     if current_price is None or pd.isna(current_price): price_str = "N/A"
                     elif abs(current_price) < 0.01 and abs(current_price) > 0: price_str = f"{current_price:.6f}"
@@ -232,6 +257,11 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
                     })
             except Exception as e:
                 error_logs.append({"Actif": asset_name_display, "Erreur Générale": str(e)})
+            
+            # --- AJOUT POUR DÉBOGAGE ---
+            st.sidebar.info(f"Fin: {asset_ticker}") 
+            print(f"DEBUG: Fin traitement: {asset_ticker}")
+            # --- FIN AJOUT ---
             progress_bar.progress((i + 1) / total_assets_count)
 
         progress_bar_container.empty()
