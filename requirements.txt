@@ -1,6 +1,6 @@
 streamlit
 pandas
-numpy>=1.25.0  # Ou juste numpy, pour prendre la dernière version compatible
+numpy==1.23.5
 yfinance
-pandas-ta
+pandas-ta==0.3.14b0
 setuptools
