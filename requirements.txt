@@ -1,6 +1,6 @@
 streamlit
 pandas
-numpy==1.26.4
+numpy
 yfinance
 pandas-ta
-setuptools
+alpaca-trade-api
