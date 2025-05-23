@@ -1,32 +1,29 @@
 import streamlit as st
 import pandas as pd
-import numpy as np # Sera importé selon la version de requirements.txt
+import numpy as np
 import yfinance as yf
-import pandas_ta as pd_ta # Sera importé selon la version de requirements.txt
-from datetime import datetime, timedelta 
+import pandas_ta as pd_ta # Assurez-vous que ceci s'importe correctement avec votre requirements.txt
 
 # --- Section 1: Fonction de Calcul de l'Indicateur Canadian Confluence ---
 def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLength, ichimokuLength, len1_smooth_ha, len2_smooth_ha):
     min_rows_needed = max(hmaLength, adxLength, rsiLength, ichimokuLength, 26, 52, len1_smooth_ha, len2_smooth_ha) + 50
+    current_price_fallback = 0
+    if not df.empty and 'Close' in df.columns and not df['Close'].empty:
+        current_price_fallback = df['Close'].iloc[-1]
+    
     if len(df) < min_rows_needed:
-        current_price_fallback = 0
-        if not df.empty and 'Close' in df.columns and not df['Close'].empty:
-            current_price_fallback = df['Close'].iloc[-1]
         return "Erreur", f"Pas assez de données ({len(df)}/{min_rows_needed})", current_price_fallback
 
     df_calc = df.copy()
     hma_slope_signal, ha_signal, smoothed_ha_signal, rsi_signal, adx_has_momentum_signal, ichimoku_signal = 0,0,0,0,0,0
-    current_price = 0 # Default
-    if not df_calc.empty and 'Close' in df_calc.columns and not df_calc['Close'].empty:
-        current_price = df_calc['Close'].iloc[-1]
-
+    current_price = current_price_fallback # Utiliser le fallback calculé au début
 
     try:
         hma_series = df_calc.ta.hma(length=hmaLength, append=False)
         if hma_series is not None and not hma_series.isna().all() and len(hma_series) >= 2:
             if hma_series.iloc[-1] > hma_series.iloc[-2]: hma_slope_signal = 1
             elif hma_series.iloc[-1] < hma_series.iloc[-2]: hma_slope_signal = -1
-        else: return "Erreur HMA", "Calcul HMA impossible (série vide ou <2 valeurs)", current_price
+        else: return "Erreur HMA", "Calcul HMA impossible", current_price
     except Exception as e: return "Erreur HMA", str(e), current_price
 
     try:
@@ -34,7 +31,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         if ha_df is not None and 'HA_close' in ha_df.columns and 'HA_open' in ha_df.columns and not ha_df['HA_close'].isna().all() and len(ha_df) > 0:
             if ha_df['HA_close'].iloc[-1] > ha_df['HA_open'].iloc[-1]: ha_signal = 1
             elif ha_df['HA_close'].iloc[-1] < ha_df['HA_open'].iloc[-1]: ha_signal = -1
-        else: return "Erreur HA", "Calcul HA impossible (série vide ou colonnes manquantes)", current_price
+        else: return "Erreur HA", "Calcul HA impossible", current_price
     except Exception as e: return "Erreur HA", str(e), current_price
 
     try:
@@ -46,7 +43,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
 
         ha_on_ema = pd.DataFrame(index=ohlc_ema.index)
         ha_on_ema['haclose_s1'] = (ohlc_ema['Open'] + ohlc_ema['High'] + ohlc_ema['Low'] + ohlc_ema['Close']) / 4
-        ha_on_ema['haopen_s1'] = np.nan # Utilisez np.nan (minuscule) qui vient de la version de numpy installée
+        ha_on_ema['haopen_s1'] = np.nan
         first_valid_idx = ohlc_ema.first_valid_index()
         if first_valid_idx is not None and not ohlc_ema.loc[first_valid_idx, ['Open', 'Close']].isna().any():
             ha_on_ema.loc[first_valid_idx, 'haopen_s1'] = (ohlc_ema.loc[first_valid_idx, 'Open'] + ohlc_ema.loc[first_valid_idx, 'Close']) / 2
@@ -60,8 +57,7 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
                 elif not ohlc_ema.loc[curr_actual_idx, ['Open', 'Close']].isna().any():
                     ha_on_ema.loc[curr_actual_idx, 'haopen_s1'] = (ohlc_ema.loc[curr_actual_idx, 'Open'] + ohlc_ema.loc[curr_actual_idx, 'Close']) / 2
         ha_on_ema.dropna(subset=['haopen_s1', 'haclose_s1'], inplace=True)
-        if ha_on_ema.empty:
-            return "Erreur HA Lissé", "Données HA_on_EMA vides après dropna", current_price
+        if ha_on_ema.empty: return "Erreur HA Lissé", "Données HA_on_EMA vides", current_price
         smooth_ha_open = ha_on_ema['haopen_s1'].ewm(span=len2_smooth_ha, adjust=False).mean()
         smooth_ha_close = ha_on_ema['haclose_s1'].ewm(span=len2_smooth_ha, adjust=False).mean()
         if not smooth_ha_open.empty and not smooth_ha_close.empty and not smooth_ha_open.isna().all() and not smooth_ha_close.isna().all():
@@ -105,12 +101,12 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
         current_cloud_top_val = cloud_top_current.iloc[-1]
         current_cloud_bottom_val = cloud_bottom_current.iloc[-1]
         if pd.isna(current_close_val) or pd.isna(current_cloud_top_val) or pd.isna(current_cloud_bottom_val):
-             return "Erreur Ichimoku", "Données cloud Ichimoku manquantes (NaN)", current_price
+             return "Erreur Ichimoku", "Données cloud Ichimoku manquantes", current_price
         if current_close_val > current_cloud_top_val: ichimoku_signal = 1
         elif current_close_val < current_cloud_bottom_val: ichimoku_signal = -1
     except Exception as e: return "Erreur Ichimoku", str(e), current_price
     
-    bullConfluences, bearConfluences = 0, 0
+    bullConfluences, bearConfluences = 0,0
     primary_bull = hma_slope_signal == 1 or ha_signal == 1 or smoothed_ha_signal == 1 or rsi_signal == 1 or ichimoku_signal == 1
     primary_bear = hma_slope_signal == -1 or ha_signal == -1 or smoothed_ha_signal == -1 or rsi_signal == -1 or ichimoku_signal == -1
     if hma_slope_signal == 1: bullConfluences += 1
@@ -129,18 +125,17 @@ def calculate_canadian_confluence(df, hmaLength, adxThreshold, rsiLength, adxLen
 
 # --- Section 2: Configuration de l'Application Streamlit ---
 st.set_page_config(layout="wide")
-st.title("🚀 Canadian Confluence Premium Scanner (yfinance)")
-st.markdown("Analyse les actifs pour des signaux de 5 ou 6 étoiles basés sur l'indicateur Canadian Confluence.")
+st.title("🚀 Canadian Confluence Scanner (Forex & Or)")
+st.markdown("Analyse les paires Forex et XAU/USD pour des signaux de 5 ou 6 étoiles.")
 
 st.sidebar.header("⚙️ Paramètres de l'Indicateur")
-hmaLength_input = st.sidebar.number_input("HMA Length (Pine: 20)", min_value=1, value=20, step=1, key="hma_len")
-adxThreshold_input = st.sidebar.number_input("ADX Threshold (Pine: 20)", min_value=1, value=20, step=1, key="adx_thresh")
-rsiLength_input = st.sidebar.number_input("RSI Length (Pine: 10)", min_value=1, value=10, step=1, key="rsi_len")
-adxLength_input = st.sidebar.number_input("ADX Length (Pine: 14)", min_value=1, value=14, step=1, key="adx_len")
-ichimokuLength_input = st.sidebar.number_input("Ichimoku: Tenkan Length (Pine: 9)", min_value=1, value=9, step=1, key="ichi_tenkan")
-len1_input = st.sidebar.number_input("Smoothed HA Length 1 (EMA OHLC, Pine: 10)", min_value=1, value=10, step=1, key="sha_len1")
-len2_input = st.sidebar.number_input("Smoothed HA Length 2 (EMA sur HA, Pine: 10)", min_value=1, value=10, step=1, key="sha_len2")
-
+hmaLength_input = st.sidebar.number_input("HMA Length", min_value=1, value=20, step=1, key="hma_len")
+adxThreshold_input = st.sidebar.number_input("ADX Threshold", min_value=1, value=20, step=1, key="adx_thresh")
+rsiLength_input = st.sidebar.number_input("RSI Length", min_value=1, value=10, step=1, key="rsi_len")
+adxLength_input = st.sidebar.number_input("ADX Length", min_value=1, value=14, step=1, key="adx_len")
+ichimokuLength_input = st.sidebar.number_input("Ichimoku: Tenkan", min_value=1, value=9, step=1, key="ichi_tenkan")
+len1_input = st.sidebar.number_input("Smoothed HA EMA1", min_value=1, value=10, step=1, key="sha_len1")
+len2_input = st.sidebar.number_input("Smoothed HA EMA2", min_value=1, value=10, step=1, key="sha_len2")
 
 st.sidebar.header("🕒 Paramètres du Scan")
 timeframe_options = {
@@ -150,28 +145,42 @@ timeframe_options = {
 timeframe_display = st.sidebar.selectbox("Unité de Temps", list(timeframe_options.keys()), index=4, key="timeframe_select")
 timeframe_yf = timeframe_options[timeframe_display]
 
+# --- SIMPLIFICATION DES LISTES D'ACTIFS ---
 assets_forex_input_default = "EURUSD=X,GBPUSD=X,USDJPY=X,AUDUSD=X,USDCAD=X,NZDUSD=X,USDCHF=X"
-assets_commodities_input_default = "XAUUSD=X,SI=F,CL=F,NG=F" 
-assets_indices_input_default = "^GSPC,^DJI,^IXIC,^FTSE,^GDAXI,^FCHI,^N225"
+asset_gold_input_default = "XAUUSD=X"
 
-assets_forex_input = st.sidebar.text_area("Paires Forex", assets_forex_input_default, key="forex_assets")
-assets_commodities_input = st.sidebar.text_area("Matières Premières", assets_commodities_input_default, key="commodities_assets")
-assets_indices_input = st.sidebar.text_area("Indices", assets_indices_input_default, key="indices_assets")
+assets_forex_input = st.sidebar.text_area("Paires Forex (ex: EURUSD=X)", assets_forex_input_default, key="forex_assets")
+asset_gold_input = st.sidebar.text_area("Or (XAUUSD=X)", asset_gold_input_default, key="gold_asset") # Un seul champ pour l'or
+# --- FIN SIMPLIFICATION ---
 
 results_placeholder = st.empty()
 status_placeholder = st.empty()
 
 if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="primary", key="scan_button_main"):
-    all_asset_tickers_str = f"{assets_forex_input},{assets_commodities_input},{assets_indices_input}"
-    all_assets = [ticker.strip().upper() for ticker in all_asset_tickers_str.split(',') if ticker.strip()]
+    
+    # --- CONSTRUCTION DE LA LISTE D'ACTIFS SIMPLIFIÉE ---
+    forex_tickers = [ticker.strip().upper() for ticker in assets_forex_input.split(',') if ticker.strip()]
+    gold_ticker_list = [ticker.strip().upper() for ticker in asset_gold_input.split(',') if ticker.strip()] # Au cas où l'utilisateur mettrait plusieurs, on prend le premier valide
+    
+    all_assets = forex_tickers
+    if gold_ticker_list: # S'assurer que le champ or n'est pas vide
+        # Pour s'assurer qu'on n'ajoute que XAUUSD=X et pas d'autres choses si l'utilisateur modifie
+        valid_gold_ticker = [gt for gt in gold_ticker_list if gt == "XAUUSD=X"]
+        if valid_gold_ticker:
+            if "XAUUSD=X" not in all_assets: # Eviter les doublons si déjà dans forex_tickers
+                 all_assets.append(valid_gold_ticker[0])
+        elif gold_ticker_list : # Si l'utilisateur a mis autre chose que XAUUSD=X
+             st.sidebar.warning(f"Ticker Or non valide: {gold_ticker_list[0]}. Utilisation de XAUUSD=X ignorée.")
+
 
     if not all_assets:
-        status_placeholder.warning("Veuillez entrer au moins un ticker d'actif.")
+        status_placeholder.warning("Veuillez entrer au moins un ticker d'actif Forex ou Or.")
         results_placeholder.empty()
     else:
         results_placeholder.empty()
         status_placeholder.info(f"Scan en cours pour {len(all_assets)} actifs sur {timeframe_display}...")
         st.toast(f"Scan lancé pour {len(all_assets)} actifs...", icon="⏳")
+        
         premium_signals = []
         error_logs = []
         progress_bar_container = st.empty()
@@ -181,10 +190,8 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
         candles_to_fetch = max_lookback_param + 150 
 
         asset_name_display_mapping = {
-            "XAUUSD=X": "Or (XAU/USD)", "SI=F": "Argent (Futures)", "CL=F": "Pétrole (WTI Futures)", "NG=F": "Gaz Naturel (Futures)",
-            "^GSPC": "S&P 500", "^DJI": "US30 (Dow Jones)", "^IXIC": "NAS100 (Nasdaq)",
-            "^FTSE": "FTSE 100 (UK)", "^GDAXI": "DAX 40 (Allemagne)", "^FCHI": "CAC 40 (France)",
-            "^N225": "Nikkei 225 (Japon)"
+            "XAUUSD=X": "Or (XAU/USD)"
+            # Les paires Forex seront gérées par le remplacement générique de "=X"
         }
         
         for i, asset_ticker in enumerate(all_assets):
@@ -198,8 +205,7 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
             if asset_ticker in asset_name_display_mapping:
                 asset_name_display = asset_name_display_mapping[asset_ticker]
             else: 
-                name_temp = asset_ticker.replace("=X", "").replace(".SI", "").replace("=F", "").replace("^", "")
-                asset_name_display = name_temp
+                asset_name_display = asset_ticker.replace("=X", "") # Pour les paires Forex
             
             try:
                 yf_period_to_use = "2y" 
@@ -227,7 +233,7 @@ if st.sidebar.button("🚀 Lancer le Scan", use_container_width=True, type="prim
                 
                 data_for_indicator = data.iloc[-candles_to_fetch:]
                 if len(data_for_indicator) < max_lookback_param + 5:
-                    msg = f"Données insuffisantes après filtrage pour {asset_name_display} ({len(data_for_indicator)}/{max_lookback_param+5})."
+                    msg = f"Données insuffisantes après filtrage ({len(data_for_indicator)}/{max_lookback_param+5})."
                     error_logs.append({"Actif": asset_name_display, "Erreur": msg})
                     continue
 
@@ -283,3 +289,4 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.info("Indicateur: Canadian Confluence. Données: yfinance.")
+   
