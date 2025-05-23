@@ -1,6 +1,6 @@
 streamlit
 pandas
-numpy<1.25
+numpy>=1.23,<1.26 # Donne un peu de flexibilité à numpy
 yfinance
-pandas-ta
+pandas-ta>=0.3.14b0 # ou la dernière version stable de pandas-ta
 setuptools
