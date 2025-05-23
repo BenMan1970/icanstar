@@ -3,4 +3,3 @@ pandas
 numpy
 yfinance
 pandas-ta
-alpaca-trade-api
